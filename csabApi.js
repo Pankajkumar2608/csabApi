@@ -35,7 +35,8 @@ const app = express();
 // --- Middleware ---
 // Enable CORS - Adjust origin for production
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*' // Allow all origins in dev, specific in prod
+    origin: ["https://www.motivationkaksha.com", "https://motivationkaksha.com", "http://127.0.0.1:5500"],
+    credentials: true
 }));
 
 // Parse JSON request bodies
