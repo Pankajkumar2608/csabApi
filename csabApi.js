@@ -34,7 +34,7 @@ const app = express();
 
 // --- Middleware ---
 app.use(cors({
-    origin: ["https://www.motivationkaksha.com", "https://motivationkaksha.com", "http://127.0.0.1:5500"],
+    origin: ["https://www.motivationkaksha.in", "https://motivationkaksha.in", "http://127.0.0.1:5500"],
     credentials: true
 }));
 app.use(express.json());
