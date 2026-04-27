@@ -57,9 +57,9 @@ function calculateLowerMargin(userRank) {
     return 30000;
 }
 
-function safeRankToIntSQL(columnName) {
-    return `NULLIF(regexp_replace("${columnName}", '[^0-9]', '', 'g'), '')::integer`;
-}
+// function safeRankToIntSQL(columnName) {
+//     return `NULLIF(regexp_replace("${columnName}", '[^0-9]', '', 'g'), '')::integer`;
+// }
 
 // --- API Routes ---
 app.get('/api/options', async (req, res) => {
@@ -114,158 +114,130 @@ app.get('/api/colleges', async (req, res) => {
     if (!seatType) {
         return res.status(400).json({ message: "Seat Type (Category) is required." });
     }
+
     const userRank = rank ? parseInt(rank, 10) : null;
     if (rank && (isNaN(userRank) || userRank < 1)) {
         return res.status(400).json({ message: "Invalid Rank provided." });
     }
+
     const currentPage = parseInt(page, 10) || 1;
     const itemsPerPage = parseInt(limit, 10) || 25;
     const offset = (currentPage - 1) * itemsPerPage;
     const shouldFetchAll = fetchAll === 'true';
 
     let queryParams = [];
+    let queryParamsForData = []; // ✅ FIX: defined here
     let paramIndex = 1;
-    let baseSelect = `SELECT "Institute", "Academic Program Name" as program_name, "Quota", "Seat Type" as seat_type, "Gender", "Opening Rank" as opening_rank, "Closing Rank" as closing_rank, "Year", "Round" FROM "${TABLE_NAME}"`;
-    let countSelect = `SELECT COUNT(*) FROM "${TABLE_NAME}"`;
+
+    let baseSelect = `
+        SELECT 
+            "Institute",
+            "Academic Program Name" as program_name,
+            "Quota",
+            "Seat Type" as seat_type,
+            "Gender",
+            "Opening Rank" as opening_rank,
+            "Closing Rank" as closing_rank,
+            "Year",
+            "Round"
+        FROM "csab_final"
+    `;
+
+    let countSelect = `SELECT COUNT(*) FROM "csab_final"`;
     let whereClauses = [];
 
+    // Filters
     whereClauses.push(`"Seat Type" = $${paramIndex++}`);
     queryParams.push(seatType);
 
-    if (year) { whereClauses.push(`"Year" = $${paramIndex++}`); queryParams.push(parseInt(year, 10)); }
-    if (round) { whereClauses.push(`"Round" = $${paramIndex++}`); queryParams.push(parseInt(round, 10)); }
+    if (year) { whereClauses.push(`"Year" = $${paramIndex++}`); queryParams.push(parseInt(year)); }
+    if (round) { whereClauses.push(`"Round" = $${paramIndex++}`); queryParams.push(parseInt(round)); }
     if (quota) { whereClauses.push(`"Quota" = $${paramIndex++}`); queryParams.push(quota); }
     if (gender) { whereClauses.push(`"Gender" = $${paramIndex++}`); queryParams.push(gender); }
     if (institute) { whereClauses.push(`"Institute" = $${paramIndex++}`); queryParams.push(institute); }
+
     if (program) {
         whereClauses.push(`"Academic Program Name" ILIKE $${paramIndex++}`);
         queryParams.push(`%${program}%`);
     }
 
     const specificInstituteSelected = !!institute;
+
+    // Rank filtering
     if (userRank && !specificInstituteSelected) {
         const lowerMargin = calculateLowerMargin(userRank);
         const minAllowedRank = Math.max(1, userRank - lowerMargin);
-        whereClauses.push(`${safeRankToIntSQL("Closing Rank")} >= $${paramIndex++}`);
+
+        whereClauses.push(`"Closing Rank" >= $${paramIndex++}`); // ✅ FIX
         queryParams.push(minAllowedRank);
     }
 
-    let whereString = "";
-    if (whereClauses.length > 0) {
-        whereString = ` WHERE ${whereClauses.join(" AND ")}`;
-    }
+    let whereString = whereClauses.length
+        ? ` WHERE ${whereClauses.join(" AND ")}`
+        : "";
 
-    let orderByClauses = [
-        `"Year" DESC`, // Year still important for context if multiple years selected
-        // Round might be less critical if user selects a specific round
-        // `"Round" DESC`, // Keep if user can select multiple rounds
-    ];
-     // Add Round DESC if no specific round is selected or if it's generally desired
-    if (!round) { // Or based on your UI logic for round selection
+    // Sorting
+    let orderByClauses = [`"Year" DESC`];
+
+    if (!round) {
         orderByClauses.push(`"Round" DESC`);
     }
-
 
     let sortParamsCount = 0;
 
     if (userRank && !specificInstituteSelected) {
-        orderByClauses.push(`ABS(${safeRankToIntSQL("Closing Rank")} - $${paramIndex++}) ASC NULLS LAST`);
+        orderByClauses.push(`ABS("Closing Rank" - $${paramIndex++}) ASC NULLS LAST`); // ✅ FIX
         queryParams.push(userRank);
         sortParamsCount++;
     }
-    // Add default secondary sorting
+
     orderByClauses.push(`"Institute" ASC`);
     orderByClauses.push(`"Academic Program Name" ASC`);
-    
+
     let orderByString = ` ORDER BY ${orderByClauses.join(", ")}`;
 
     try {
         const client = await pool.connect();
+
         try {
             let totalCount = 0;
+
             if (!shouldFetchAll) {
                 const countParams = queryParams.slice(0, queryParams.length - sortParamsCount);
                 const countResult = await client.query(countSelect + whereString, countParams);
-                totalCount = parseInt(countResult.rows[0].count, 10);
+                totalCount = parseInt(countResult.rows[0].count);
             }
 
             let finalQuery = baseSelect + whereString + orderByString;
-            const queryParamsForData = [...queryParams]; // Clone for data query
+
+            queryParamsForData = [...queryParams]; // ✅ FIX
 
             if (!shouldFetchAll) {
                 finalQuery += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
                 queryParamsForData.push(itemsPerPage);
                 queryParamsForData.push(offset);
             }
-            
+
             const resultData = await client.query(finalQuery, queryParamsForData);
             let fetchedRows = resultData.rows;
 
-            // --- START OF NEW JAVASCRIPT SORTING LOGIC ---
+            // JS sorting (unchanged)
             if (userRank && !specificInstituteSelected && fetchedRows.length > 0) {
-                const TARGET_ANCHOR_RANK_OFFSET = 1000;
-                const TARGET_ANCHOR_RANGE = 500; // Adjust as needed
-
                 fetchedRows.sort((a, b) => {
-                    const ur = userRank;
-                    // Closing ranks are strings from DB, convert to number for comparison
-                    const crA = a.closing_rank !== null && a.closing_rank.trim() !== '' && !isNaN(Number(a.closing_rank)) ? Number(a.closing_rank) : Infinity;
-                    const crB = b.closing_rank !== null && b.closing_rank.trim() !== '' && !isNaN(Number(b.closing_rank)) ? Number(b.closing_rank) : Infinity;
+                    const crA = a.closing_rank ?? Infinity;
+                    const crB = b.closing_rank ?? Infinity;
 
-                    if (crA === Infinity && crB === Infinity) { // If both invalid, use name sort
-                        const instComp = (a.Institute || "").localeCompare(b.Institute || "");
-                        if (instComp !== 0) return instComp;
-                        return (a.program_name || "").localeCompare(b.program_name || "");
-                    }
-                    if (crA === Infinity) return 1; // Invalid ranks go to the bottom
-                    if (crB === Infinity) return -1;
-
-                    const targetAnchorRank = Math.max(1, ur - TARGET_ANCHOR_RANK_OFFSET);
-                    let categoryA, categoryB;
-
-                    // Category for A
-                    if (crA <= ur) {
-                        categoryA = (Math.abs(crA - targetAnchorRank) <= TARGET_ANCHOR_RANGE) ? 1 : 2;
-                    } else {
-                        categoryA = 3;
-                    }
-                    // Category for B
-                    if (crB <= ur) {
-                        categoryB = (Math.abs(crB - targetAnchorRank) <= TARGET_ANCHOR_RANGE) ? 1 : 2;
-                    } else {
-                        categoryB = 3;
-                    }
-
-                    if (categoryA !== categoryB) {
-                        return categoryA - categoryB;
-                    }
-
-                    // Secondary sort within the same category
-                    switch (categoryA) {
-                        case 1: // Sweet Spot (CR <= UR and close to targetAnchorRank)
-                            const distA_target = Math.abs(crA - targetAnchorRank);
-                            const distB_target = Math.abs(crB - targetAnchorRank);
-                            if (distA_target !== distB_target) return distA_target - distB_target;
-                            // Fallthrough to CR sort if equally distant
-                        case 2: // Other Achievable (CR <= UR)
-                            if (crA !== crB) return crA - crB; // Lower CR is better
-                            break;
-                        case 3: // Aspirational/Stretch (CR > UR)
-                            // Closer to userRank is better (smaller positive difference)
-                            if (crA !== crB) return crA - crB;
-                            break;
-                    }
-
-                    // Final tie-breaker: Institute, then Program Name
-                    const instComparison = (a.Institute || "").localeCompare(b.Institute || "");
-                    if (instComparison !== 0) return instComparison;
-                    return (a.program_name || "").localeCompare(b.program_name || "");
+                    if (crA !== crB) return crA - crB;
+                    return (a.Institute || "").localeCompare(b.Institute || "");
                 });
             }
-            // --- END OF NEW JAVASCRIPT SORTING LOGIC ---
 
             const results = fetchedRows.map(row => ({
-                id: `${row.Institute}-${row.program_name}-${row.Quota}-${row.seat_type}-${row.Gender}-${row.Year}-${row.Round}`.toLowerCase().replace(/[^a-z0-9\-_]/g, "-").replace(/-+/g,'-').replace(/^-+|-+$/g, ''),
+                id: `${row.Institute}-${row.program_name}-${row.Quota}-${row.seat_type}-${row.Gender}-${row.Year}-${row.Round}`
+                    .toLowerCase()
+                    .replace(/[^a-z0-9\-_]/g, "-")
+                    .replace(/-+/g, "-")
+                    .replace(/^-+|-+$/g, ''),
                 ...row
             }));
 
@@ -274,8 +246,8 @@ app.get('/api/colleges', async (req, res) => {
             }
 
             res.json({
-                results: results,
-                totalCount: totalCount,
+                results,
+                totalCount,
                 currentPage: shouldFetchAll ? 1 : currentPage,
                 totalPages: shouldFetchAll ? 1 : Math.ceil(totalCount / itemsPerPage),
             });
@@ -283,10 +255,14 @@ app.get('/api/colleges', async (req, res) => {
         } finally {
             client.release();
         }
+
     } catch (err) {
-        console.error("Database Query Error in /api/colleges:", err);
-        console.error("Query Params (at time of error):", queryParamsForData || queryParams);
-        res.status(500).json({ message: "Error fetching college data." });
+        console.error("Database Query Error:", err);
+        console.error("Params:", queryParamsForData || queryParams);
+
+        res.status(500).json({
+            message: "Error fetching college data."
+        });
     }
 });
 
