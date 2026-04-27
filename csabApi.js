@@ -157,7 +157,52 @@ app.get('/api/colleges', async (req, res) => {
         });
     }
 });
+app.get('/api/trends', async (req, res) => {
+    const { institute, program, quota, seatType, gender, round } = req.query;
 
+    if (!institute || !program || !quota || !seatType || !gender || !round) {
+        return res.status(400).json({ message: "Missing required parameters" });
+    }
+
+    const queryText = `
+        SELECT 
+            "Year" as year,
+            opening_rank,
+            closing_rank
+        FROM csab_final
+        WHERE "Institute" = $1
+          AND "Academic Program Name" = $2
+          AND "Quota" = $3
+          AND seat_type = $4
+          AND "Gender" = $5
+          AND "Round" = $6
+        ORDER BY "Year" ASC
+    `;
+
+    const queryParams = [
+        institute,
+        program,
+        quota,
+        seatType,
+        gender,
+        parseInt(round)
+    ];
+
+    try {
+        const client = await pool.connect();
+
+        try {
+            const result = await client.query(queryText, queryParams);
+            res.json(result.rows);
+        } finally {
+            client.release();
+        }
+
+    } catch (err) {
+        console.error("Trend API Error:", err);
+        res.status(500).json({ message: "Error fetching trends" });
+    }
+});
 app.listen(PORT, () => {
     console.log(`Server running on ${PORT}`);
 });
