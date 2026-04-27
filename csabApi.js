@@ -14,7 +14,7 @@ const pool = new Pool({
   ssl: { require: true }
 });
 
-// ---------------- HELPERS ----------------
+// -------- helper --------
 function calculateLowerMargin(rank) {
     if (rank <= 10000) return 1500;
     if (rank <= 20000) return 2500;
@@ -23,7 +23,7 @@ function calculateLowerMargin(rank) {
     return 20000;
 }
 
-// ---------------- API ----------------
+// -------- route --------
 app.get('/api/colleges', async (req, res) => {
     const {
         rank, seatType, year, round,
@@ -44,16 +44,15 @@ app.get('/api/colleges', async (req, res) => {
     let queryParamsForData = [];
     let paramIndex = 1;
 
-    // ✅ EXACT COLUMN NAMES FROM YOUR DB
     const baseQuery = `
         SELECT 
             "Institute",
             "Academic Program Name" as program_name,
             "Quota",
-            "Seat Type" as seat_type,
+            seat_type,
             "Gender",
-            "opening Rank" as opening_rank,
-            "Closing Rank" as closing_rank,
+            opening_rank,
+            closing_rank,
             "Year",
             "Round"
         FROM csab_final
@@ -62,7 +61,7 @@ app.get('/api/colleges', async (req, res) => {
     let where = [];
 
     // filters
-    where.push(`"Seat Type" = $${paramIndex++}`);
+    where.push(`seat_type = $${paramIndex++}`);
     queryParams.push(seatType);
 
     if (year) {
@@ -98,7 +97,7 @@ app.get('/api/colleges', async (req, res) => {
     // rank filter
     if (userRank && !institute) {
         const minRank = Math.max(1, userRank - calculateLowerMargin(userRank));
-        where.push(`"Closing Rank" >= $${paramIndex++}`);
+        where.push(`closing_rank >= $${paramIndex++}`);
         queryParams.push(minRank);
     }
 
@@ -108,7 +107,7 @@ app.get('/api/colleges', async (req, res) => {
     let orderBy = `"Year" DESC, "Round" DESC`;
 
     if (userRank && !institute) {
-        orderBy += `, ABS("Closing Rank" - $${paramIndex++}) ASC`;
+        orderBy += `, ABS(closing_rank - $${paramIndex++}) ASC`;
         queryParams.push(userRank);
     }
 
@@ -118,7 +117,6 @@ app.get('/api/colleges', async (req, res) => {
         const client = await pool.connect();
 
         try {
-            // count
             const countResult = await client.query(
                 `SELECT COUNT(*) FROM csab_final ${whereClause}`,
                 queryParams.slice(0, queryParams.length - (userRank && !institute ? 1 : 0))
@@ -126,8 +124,12 @@ app.get('/api/colleges', async (req, res) => {
 
             const totalCount = parseInt(countResult.rows[0].count);
 
-            // main query
-            let finalQuery = `${baseQuery} ${whereClause} ORDER BY ${orderBy} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+            let finalQuery = `
+                ${baseQuery}
+                ${whereClause}
+                ORDER BY ${orderBy}
+                LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+            `;
 
             queryParamsForData = [...queryParams];
             queryParamsForData.push(itemsPerPage);
@@ -135,15 +137,8 @@ app.get('/api/colleges', async (req, res) => {
 
             const result = await client.query(finalQuery, queryParamsForData);
 
-            const rows = result.rows.map(r => ({
-                id: `${r.Institute}-${r.program_name}-${r.Year}-${r.Round}`
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]/g, "-"),
-                ...r
-            }));
-
             res.json({
-                results: rows,
+                results: result.rows,
                 totalCount,
                 currentPage,
                 totalPages: Math.ceil(totalCount / itemsPerPage)
