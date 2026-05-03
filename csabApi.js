@@ -203,6 +203,56 @@ app.get('/api/trends', async (req, res) => {
         res.status(500).json({ message: "Error fetching trends" });
     }
 });
+
+app.get('/api/options', async (req, res) => {
+    const { types } = req.query;
+
+    if (!types) {
+        return res.status(400).json({ message: "types query required" });
+    }
+
+    const typeList = types.split(',');
+
+    const mapping = {
+        years: `"Year"`,
+        rounds: `"Round"`,
+        quotas: `"Quota"`,
+        seatTypes: `seat_type`,
+        genders: `"Gender"`,
+        institutes: `"Institute"`,
+        programs: `"Academic Program Name"`
+    };
+
+    try {
+        const client = await pool.connect();
+
+        try {
+            let response = {};
+
+            for (let type of typeList) {
+                if (!mapping[type]) continue;
+
+                const query = `
+                    SELECT DISTINCT ${mapping[type]} AS value
+                    FROM csab_final
+                    ORDER BY value ASC
+                `;
+
+                const result = await client.query(query);
+                response[type] = result.rows.map(r => r.value);
+            }
+
+            res.json(response);
+
+        } finally {
+            client.release();
+        }
+
+    } catch (err) {
+        console.error("OPTIONS API ERROR:", err);
+        res.status(500).json({ message: "Error fetching options" });
+    }
+});
 app.listen(PORT, () => {
     console.log(`Server running on ${PORT}`);
 });
