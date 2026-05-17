@@ -24,6 +24,10 @@ function calculateLowerMargin(rank) {
 }
 
 // -------- route --------
+
+app.get('/api/health', async (req,res) =>{
+  return res.json("everything under control")
+})
 app.get('/api/colleges', async (req, res) => {
     const {
         rank, seatType, year, round,
